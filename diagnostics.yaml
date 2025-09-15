@@ -1,0 +1,24 @@
+sensor:
+  - platform: uptime
+    id: uptime_seconds
+    name: "Uptime"
+    entity_category: "diagnostic"
+  
+  - platform: wifi_signal
+    id: wifi_signal_strength
+    name: "WiFi Signal"
+    update_interval: 60s
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      id: ip_address
+      name: "IP Address"
+      entity_category: "diagnostic"
+      
+binary_sensor:
+  - platform: status
+    id: device_status
+    name: "Device Status"
+    entity_category: "diagnostic"

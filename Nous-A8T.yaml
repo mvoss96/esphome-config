@@ -21,11 +21,6 @@ esp32:
   framework:
     type: esp-idf
 
-packages:
-  diagnostics:
-    url: https://github.com/mvoss96/esphome-config
-    file: diagnostics.yaml
-
 # Enable logging
 logger:
 

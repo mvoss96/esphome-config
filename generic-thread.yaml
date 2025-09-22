@@ -1,0 +1,27 @@
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+
+# Allow Over-The-Air updates
+ota:
+  - platform: esphome
+
+network:
+  enable_ipv6: true
+
+openthread:
+  device_type: FTD
+  tlv: !secret thread_tlv
+
+text_sensor:
+  - platform: openthread_info
+    ip_address:
+      name: "IP"
+    channel:
+      name: "Channel"
+    role:
+      name: "Device Role"
+    network_name:
+      name: "Network Name"

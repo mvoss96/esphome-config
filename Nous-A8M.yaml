@@ -64,7 +64,7 @@ binary_sensor:
   - platform: gpio
     name: "push_button"
     id: "push_button"
-    #internal: true
+    internal: true
     pin:
       number: P7
       inverted: yes

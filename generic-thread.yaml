@@ -14,6 +14,7 @@ network:
 openthread:
   device_type: FTD
   tlv: !secret thread_tlv
+  force_dataset: true
 
 text_sensor:
   - platform: openthread_info

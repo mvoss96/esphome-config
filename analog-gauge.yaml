@@ -133,7 +133,7 @@ script:
             float span = (${dial_max} - ${dial_min}) * ${steps_per_unit};
             float default_offset = (${total_steps} - span) / 2;
             return (int)roundf(default_offset + (${mount_value} - ${dial_min}) * ${steps_per_unit});
-      - lambda: 'id(cal_status).publish_state("Nadel jetzt auf ${mount_value} ${gauge_unit} aufsetzen");'
+      - lambda: 'id(cal_status).publish_state("Now mount the needle at ${mount_value} ${gauge_unit}");'
 
 number:
   # Only device-specific calibration constant: step position at dial_min
@@ -155,7 +155,7 @@ number:
   # Invalid offsets (needle outside the mechanical window) are rejected.
   # -------------------------------------------------------------------------
   - platform: template
-    name: "Kalibrierung: Nadel zeigt auf (${gauge_unit})"
+    name: "Calibration: Needle Points To (${gauge_unit})"
     id: needle_reading
     min_value: ${dial_min}
     max_value: ${dial_max}
@@ -173,7 +173,7 @@ number:
             if (offset < -tol || offset > max_offset + tol) {
               char buf[96];
               snprintf(buf, sizeof(buf),
-                "FEHLER: Offset %.0f ausserhalb [0..%.0f] - Nadel neu aufsetzen!",
+                "ERROR: Offset %.0f outside [0..%.0f] - remount the needle!",
                 offset, max_offset);
               id(cal_status).publish_state(buf);
               ESP_LOGW("gauge", "%s", buf);
@@ -228,7 +228,7 @@ switch:
 
 text_sensor:
   - platform: template
-    name: "Kalibrierstatus"
+    name: "Calibration Status"
     id: cal_status
     entity_category: diagnostic
 
@@ -251,7 +251,7 @@ button:
       - script.execute: calibrate_stepper
 
   - platform: template
-    name: "Nadel-Montageposition anfahren"
+    name: "Move To Needle Mounting Position"
     entity_category: config
     on_press:
       - script.execute: goto_mount_position

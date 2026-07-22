@@ -1,0 +1,257 @@
+# =============================================================================
+# analog-gauge.yaml — generic analog gauge package (stepper + A4988)
+#
+# Homing against a mechanical stop, single-point needle calibration,
+# mounting mode, test mode. Unit-agnostic (CO2, temperature, humidity, ...).
+#
+# Contract for the device YAML:
+#   1. A stepper with id `my_stepper` must be defined (platform does not matter,
+#      a4988 / uln2003 / ..., pins and max_speed are device-specific).
+#   2. The sensor calls this in its on_value:
+#        - script.execute:
+#            id: gauge_update
+#            value: !lambda "return x;"
+#   There is no additional coupling.
+#
+# Substitutions can be overridden in the device YAML
+# (or scoped via files: [{path: analog-gauge.yaml, vars: {...}}]).
+# =============================================================================
+
+substitutions:
+  gauge_unit: "ppm"          # only for entity names / status messages
+  steps_per_unit: "2.169"    # steps per unit (fixed by mechanics + dial)
+  dial_min: "400"            # start of scale
+  dial_max: "2000"           # end of scale
+  mount_value: "1200"        # scale mark where the needle is placed during mounting
+  cal_step: "5"              # step size of the calibration input field
+  total_steps: "3730"        # mechanical travel range (stop to stop)
+
+esphome:
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: calibrate_stepper
+
+globals:
+  - id: gauge_last_value
+    type: float
+    restore_value: no
+    initial_value: "NAN"
+
+script:
+  # ---------------------------------------------------------------------------
+  # Homing: drive against the lower mechanical stop; that position is 0
+  # ---------------------------------------------------------------------------
+  - id: calibrate_stepper
+    then:
+      - lambda: 'ESP_LOGD("gauge", "Homing stepper");'
+      - stepper.report_position:
+          id: my_stepper
+          position: 0
+      - stepper.set_target:
+          id: my_stepper
+          target: !lambda "return (int)(${total_steps} / 2);"
+      - wait_until:
+          condition:
+            lambda: "return id(my_stepper).current_position == (int)(${total_steps} / 2);"
+          timeout: 30s
+      - delay: 500ms
+      - stepper.report_position:
+          id: my_stepper
+          position: !lambda "return (int)${total_steps};"
+      - stepper.set_target:
+          id: my_stepper
+          target: 0
+      - wait_until:
+          condition:
+            lambda: "return id(my_stepper).current_position == 0;"
+          timeout: 30s
+      - delay: 500ms
+      - stepper.report_position:
+          id: my_stepper
+          position: 0
+      - script.execute:
+          id: set_gauge
+          value: !lambda "return id(gauge_last_value);"
+
+  # ---------------------------------------------------------------------------
+  # Entry point for the sensor in the device YAML
+  # ---------------------------------------------------------------------------
+  - id: gauge_update
+    parameters:
+      value: float
+    then:
+      - lambda: "id(gauge_last_value) = value;"
+      - if:
+          condition:
+            lambda: "return !id(test_mode).state;"
+          then:
+            - script.execute:
+                id: set_gauge
+                value: !lambda "return value;"
+
+  # ---------------------------------------------------------------------------
+  # Move the needle to a value (linear scale)
+  # ---------------------------------------------------------------------------
+  - id: set_gauge
+    parameters:
+      value: float
+    then:
+      - lambda: |-
+          if (isnan(value)) {
+            ESP_LOGW("gauge", "value is NaN, skipping update");
+            id(set_gauge).stop();
+            return;
+          }
+          ESP_LOGD("gauge", "Set gauge to %.1f ${gauge_unit}", value);
+      - stepper.set_target:
+          id: my_stepper
+          target: !lambda |-
+            if (value < ${dial_min}) value = ${dial_min};
+            if (value > ${dial_max}) value = ${dial_max};
+            float steps = id(zero_offset_steps).state
+                        + (value - ${dial_min}) * ${steps_per_unit};
+            if (steps < 0) steps = 0;
+            if (steps > ${total_steps}) steps = ${total_steps};
+            return (int)roundf(steps);
+      - wait_until:
+          condition:
+            lambda: "return id(my_stepper).current_position == id(my_stepper).target_position;"
+          timeout: 30s
+
+  # ---------------------------------------------------------------------------
+  # Mounting mode: move to a defined position, then install the needle.
+  # Offset = center of the valid window -> maximum margin on both sides.
+  # ---------------------------------------------------------------------------
+  - id: goto_mount_position
+    then:
+      - script.execute: calibrate_stepper
+      - script.wait: calibrate_stepper
+      - stepper.set_target:
+          id: my_stepper
+          target: !lambda |-
+            float span = (${dial_max} - ${dial_min}) * ${steps_per_unit};
+            float default_offset = (${total_steps} - span) / 2;
+            return (int)roundf(default_offset + (${mount_value} - ${dial_min}) * ${steps_per_unit});
+      - lambda: 'id(cal_status).publish_state("Nadel jetzt auf ${mount_value} ${gauge_unit} aufsetzen");'
+
+number:
+  # Only device-specific calibration constant: step position at dial_min
+  - platform: template
+    name: "Zero Offset Steps"
+    id: zero_offset_steps
+    optimistic: true
+    min_value: -500
+    max_value: 10000
+    step: 1
+    initial_value: 130
+    restore_value: true
+    mode: box
+    entity_category: config
+
+  # -------------------------------------------------------------------------
+  # Single-point calibration: enter the value the needle is currently pointing to.
+  # set_action instead of on_value so boot restore does not trigger calibration.
+  # Invalid offsets (needle outside the mechanical window) are rejected.
+  # -------------------------------------------------------------------------
+  - platform: template
+    name: "Kalibrierung: Nadel zeigt auf (${gauge_unit})"
+    id: needle_reading
+    min_value: ${dial_min}
+    max_value: ${dial_max}
+    step: ${cal_step}
+    mode: box
+    entity_category: config
+    set_action:
+      then:
+        - lambda: |-
+            float span = (${dial_max} - ${dial_min}) * ${steps_per_unit};
+            float offset = id(my_stepper).current_position
+                         - (x - ${dial_min}) * ${steps_per_unit};
+            float max_offset = ${total_steps} - span;
+            const float tol = 15;  // Tolerance for reading inaccuracy
+            if (offset < -tol || offset > max_offset + tol) {
+              char buf[96];
+              snprintf(buf, sizeof(buf),
+                "FEHLER: Offset %.0f ausserhalb [0..%.0f] - Nadel neu aufsetzen!",
+                offset, max_offset);
+              id(cal_status).publish_state(buf);
+              ESP_LOGW("gauge", "%s", buf);
+              return;
+            }
+            if (offset < 0) offset = 0;
+            if (offset > max_offset) offset = max_offset;
+            id(zero_offset_steps).make_call().set_value(offset).perform();
+            char buf[64];
+            snprintf(buf, sizeof(buf), "OK: Offset = %.0f", offset);
+            id(cal_status).publish_state(buf);
+        - script.execute:
+            id: set_gauge
+            value: !lambda "return id(gauge_last_value);"
+
+  - platform: template
+    name: "Test Mode Position (${gauge_unit})"
+    id: test_mode_value
+    optimistic: true
+    min_value: ${dial_min}
+    max_value: ${dial_max}
+    step: ${cal_step}
+    initial_value: ${dial_min}
+    restore_value: false
+    mode: box
+    entity_category: config
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: "return id(test_mode).state;"
+            then:
+              - script.execute:
+                  id: set_gauge
+                  value: !lambda "return x;"
+
+switch:
+  - platform: template
+    name: "Test Mode"
+    id: test_mode
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
+    turn_on_action:
+      - script.execute:
+          id: set_gauge
+          value: !lambda "return id(test_mode_value).state;"
+    turn_off_action:
+      - script.execute:
+          id: set_gauge
+          value: !lambda "return id(gauge_last_value);"
+
+text_sensor:
+  - platform: template
+    name: "Kalibrierstatus"
+    id: cal_status
+    entity_category: diagnostic
+
+sensor:
+  - platform: template
+    name: "Current Steps"
+    id: current_steps
+    accuracy_decimals: 0
+    update_interval: 100ms
+    filters:
+      - delta: 1
+    lambda: "return id(my_stepper).current_position;"
+    entity_category: diagnostic
+
+button:
+  - platform: template
+    name: "Calibrate Gauge"
+    entity_category: config
+    on_press:
+      - script.execute: calibrate_stepper
+
+  - platform: template
+    name: "Nadel-Montageposition anfahren"
+    entity_category: config
+    on_press:
+      - script.execute: goto_mount_position

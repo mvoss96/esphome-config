@@ -237,7 +237,7 @@ sensor:
     name: "Current Steps"
     id: current_steps
     accuracy_decimals: 0
-    update_interval: 100ms
+    update_interval: 1s
     filters:
       - delta: 1
     lambda: "return id(my_stepper).current_position;"

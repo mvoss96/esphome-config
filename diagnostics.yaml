@@ -11,6 +11,7 @@ sensor:
     entity_category: diagnostic
 
   - platform: internal_temperature
+    id: internal_temp
     name: "Internal Temperature"
     entity_category: diagnostic
 

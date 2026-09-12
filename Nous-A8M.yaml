@@ -98,12 +98,47 @@ sensor:
     cf1_pin:
       number: P26
       inverted: True
-    current:
-      name: "Current"
-    voltage:
-      name: "Voltage"
-    power:
-      name: "Power"
-    energy:
-      name: "Energy"
     update_interval: 10s
+
+    current:
+      id: current
+      name: "Current"
+
+    voltage:
+      id: voltage
+      name: "Voltage"
+
+    power:
+      id: power
+      name: "Power"
+      force_update: true
+      on_value_range:
+        - above: ${max_power}
+          then:
+            - switch.turn_off: relay
+            - homeassistant.service:
+                service: persistent_notification.create
+                data:
+                  title: Message from ${name}
+                data_template:
+                  message: Switch turned off because power exceeded ${max_power}W
+
+  # Zaehlt ueber Neustarts hinweg weiter: total_daily_energy setzt taeglich
+  # zurueck, die Lambda addiert den Stand vor jedem Ruecksetzer in total_energy
+  # auf. Der rohe hlw8012-Energiezaehler kann das nicht, er beginnt nach jedem
+  # Boot bei null.
+  - platform: total_daily_energy
+    name: "Energy"
+    power_id: power
+    state_class: total_increasing
+    unit_of_measurement: kWh
+    filters:
+      - multiply: 0.001
+      - lambda: |-
+          static auto last_state = x;
+          if (x < last_state) {
+            id(total_energy) += last_state;
+            ESP_LOGI("main", "Energy was reset: %f", id(total_energy));
+          }
+          last_state = x;
+          return id(total_energy) + x;

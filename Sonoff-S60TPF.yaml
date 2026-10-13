@@ -83,6 +83,11 @@ esp32:
   flash_size: 4MB
   framework:
     type: esp-idf
+    sdkconfig_options:
+      # The Sonoff updater's header holds at most 7 version characters;
+      # "2026.9.1" does not fit. ESPHome itself does not use this field.
+      CONFIG_APP_PROJECT_VER_FROM_CONFIG: y
+      CONFIG_APP_PROJECT_VER: '"2.0.0"'
 
 # Log on UART0 so GPIO19 (USB D+) can be read as a board ID pin
 logger:

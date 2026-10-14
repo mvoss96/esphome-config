@@ -249,6 +249,11 @@ sensor:
       force_update: true
       filters:
         - lambda: |-
+            // With the relay off there is no load, so skip waiting for the meter
+            if (!id(relay).state) {
+              id(raw_power) = 0.0f;
+              return 0.0f;
+            }
             const auto &c = id(calibration);
             x *= id(meter_factor);
             id(raw_power) = x;
